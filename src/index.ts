@@ -20,6 +20,7 @@ class TronClass {
   private jar: CookieJar;
   private fetcher: typeof fetch;
   private loggedIn: boolean = false;
+  private cor : ((dataUrl: string) => Promise<string>) | undefined;
 
   constructor() {
     this.jar = new CookieJar();
@@ -47,6 +48,14 @@ class TronClass {
         message: "Base URL is not set. Please call setBaseUrl first.",
       };
     }
+    if (!ocr) {
+      return {
+        success: false,
+        message: "OCR function must be provided to solve captcha.",
+      };
+    }
+
+    this.cor = ocr;
 
     this.username = username;
     this.password = password;
@@ -211,7 +220,12 @@ class TronClass {
         // TODO: 這裡的 ocr 函數需要從外部傳入，或者有一個預設的處理方式
         // 目前暫時使用一個簡單的同步函數來避免錯誤
         // 這裡應該改成更合適的方式來處理 OCR
-        const loginResult = await this.login(this.username, this.password, async ()=>{return "0000";});
+        if (!this.cor) {
+          throw new Error(
+            "OCR function must be provided to solve captcha during re-authentication."
+          );
+        }
+        const loginResult = await this.login(this.username, this.password, this.cor!);
         if (!loginResult.success) {
           throw new Error(
             `Automatic re-authentication failed: ${loginResult.message}. Please log in manually.`
