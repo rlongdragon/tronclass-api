@@ -62,3 +62,25 @@ import { Tronclass } from "tronclass-api";
 })();
 ```
 
+## rate limiting
+為了避免過於頻繁的請求導致被伺服器封鎖，`Tronclass` 類別內建了一個簡單的 rate limiting 機制。 當請求過於頻繁時，會拋出一個 `RateLimitError`，並且包含一個 `waitTime` 屬性，表示建議等待的時間（毫秒）。 呼叫端可以根據這個資訊來決定何時重新發請求。
+
+```typescript
+try {
+  const courses = await tron.recentlyVisitedCourses();
+} catch (error) {
+  if (error instanceof RateLimitError) {
+    console.log(`Rate limit exceeded. Please wait ${error.waitTime} ms before retrying.`);
+    // 這裡可以加入等待邏輯，例如使用 setTimeout
+  } else {
+    // 處理其他錯誤
+    console.error("An error occurred:", error);
+  }
+}
+```
+
+預設情況下，rate limiting 設定為每分鐘不超過 60 次請求。 你可以根據需要調整這個限制。
+
+```typescript
+tronclass.fetcherRPM = 200;
+```

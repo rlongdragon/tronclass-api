@@ -62,5 +62,26 @@ import { Tronclass } from "tronclass-api";
 })();
 ```
 
+## Rate limiting
+
+To avoid being blocked by the server due to overly frequent requests, the Tronclass class includes a simple rate-limiting mechanism. When requests are too frequent, a `RateLimitError` is thrown and includes a `waitTime` property indicating the suggested wait time (milliseconds). Callers can use this information to decide when to retry.
+
+```typescript
+try {
+  const courses = await tron.recentlyVisitedCourses();
+} catch (error) {
+  if (error instanceof RateLimitError) {
+    console.log(`Rate limit exceeded. Please wait ${error.waitTime} ms before retrying.`);
+    // You can add wait logic here, for example using setTimeout or a sleep helper
+  } else {
+    // Handle other errors
+    console.error("An error occurred:", error);
+  }
+}
+```
+Default rate limiting is set to no more than 60 requests per minute. You can adjust this limit as needed.
+```typescript
+tronclass.fetcherRPM = 200;
+```
 
 > English vision translate by AI

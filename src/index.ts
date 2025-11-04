@@ -1,16 +1,24 @@
 import fetchCookie from "fetch-cookie";
+import {
+  Course,
+  HomeworkActivity,
+  loginResponse,
+  TodoList,
+} from "./types/index.js";
+export * from "./types/index.js"; // 導出 src/types/index.ts 中的所有型別
 import { CookieJar } from "tough-cookie";
 import { JSDOM } from "jsdom";
 
-/**
- * Represents the response from a login attempt.
- * @interface
- * @property {boolean} success - Indicates if the login was successful.
- * @property {string} message - A message providing additional information about the login attempt.
- */
-interface loginResponse {
-  success: boolean;
-  message: string;
+// 自訂錯誤：當達到速率限制時拋出，並攜帶可程式存取的等待時間 (ms)
+export class RateLimitError extends Error {
+  waitTime: number;
+  constructor(waitTime: number, message?: string) {
+    super(message ?? `Rate limit exceeded. Please wait ${waitTime} ms.`);
+    this.name = "RateLimitError";
+    this.waitTime = waitTime;
+    // 修正 prototype 鏈以支援 instanceof 在 TS/ES5 環境
+    Object.setPrototypeOf(this, RateLimitError.prototype);
+  }
 }
 
 class TronClass {
@@ -20,11 +28,37 @@ class TronClass {
   private jar: CookieJar;
   private fetcher: typeof fetch;
   private loggedIn: boolean = false;
-  private cor : ((dataUrl: string) => Promise<string>) | undefined;
+  private cor: ((dataUrl: string) => Promise<string>) | undefined;
+  private fetcherUsedHistory: Date[] = [];
+  public fetcherRPM: number = 60; // 每分鐘請求數
 
   constructor() {
     this.jar = new CookieJar();
-    this.fetcher = fetchCookie(fetch, this.jar);
+
+    this.fetcher = (
+      input: RequestInfo | URL,
+      init?: RequestInit
+    ): Promise<Response> => {
+      const rateLimit = this.rateLimiter();
+      if (!rateLimit.ok) {
+        throw new RateLimitError(rateLimit.waitTime ?? 0);
+      }
+      return fetchCookie(fetch, this.jar)(input, init);
+    };
+  }
+
+  private rateLimiter() {
+    const now = new Date();
+    this.fetcherUsedHistory = this.fetcherUsedHistory.filter(
+      (timestamp) => now.getTime() - timestamp.getTime() < 60000
+    );
+    if (this.fetcherUsedHistory.length >= this.fetcherRPM) {
+      const waitTime =
+        60000 - (now.getTime() - this.fetcherUsedHistory[0].getTime());
+      return { ok: false, waitTime };
+    }
+    this.fetcherUsedHistory.push(now);
+    return { ok: true };
   }
 
   public setBaseUrl(url: string): void {
@@ -103,8 +137,6 @@ class TronClass {
             message: "Invalid captcha code. Must be 4 digits.",
           };
         }
-
-        console.log("Captcha code received:", captchaCode);
 
         if (!lt) {
           throw new Error(
@@ -225,7 +257,11 @@ class TronClass {
             "OCR function must be provided to solve captcha during re-authentication."
           );
         }
-        const loginResult = await this.login(this.username, this.password, this.cor!);
+        const loginResult = await this.login(
+          this.username,
+          this.password,
+          this.cor!
+        );
         if (!loginResult.success) {
           throw new Error(
             `Automatic re-authentication failed: ${loginResult.message}. Please log in manually.`
@@ -246,10 +282,36 @@ class TronClass {
     return response;
   }
 
+  ///////////// API /////////////
   public recentlyVisitedCourses() {
     return this.call("/api/user/recently-visited-courses").then((res) =>
       res.json()
     );
+  }
+
+  public async todos(): Promise<TodoList[]> {
+    const res = await this.call("/api/todos").then((res) => res.json());
+    return res.todo_list;
+  }
+
+  public async myCourses(
+    conditions: object,
+    fields: any,
+    showScorePassedStatus: boolean = false
+  ): Promise<Course[]> {
+    const res = await this.call("/api/my-courses").then((res) => res.json());
+
+    return res.courses;
+  }
+
+  public async getHomeworkActivitiesByCourseId(
+    courseId: number
+  ): Promise<HomeworkActivity[]> {
+    const res = await this.call(
+      `api/courses/${courseId}/homework-activities`
+    ).then((res) => res.json());
+
+    return res.homework_activities;
   }
 }
 
