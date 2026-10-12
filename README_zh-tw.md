@@ -124,3 +124,23 @@ try {
 ```typescript
 tron.fetcherRPM = 200;
 ```
+
+## API 資料來源
+
+TronClass 沒有公開的 API 文件。本專案的 endpoint 與參數整理自以下來源，再用海大帳號在 `tronclass.ntou.edu.tw` 實測確認；僅參考 endpoint 與流程，沒有複製程式碼。
+
+| 來源 | 參考內容 |
+|---|---|
+| [silvercow002/tronclass-script](https://github.com/silvercow002/tronclass-script) | 海大 CAS 登入流程、最近瀏覽課程 |
+| [seven-317/Tronclass-API](https://github.com/seven-317/Tronclass-API)（MIT） | 學期、課程、章節、公告、教材、考試成績的 endpoint；API 回應檢查、自動翻頁、下載檔名解析的做法 |
+| [RX5950XT/FJU-TronClass-MCP](https://github.com/RX5950XT/FJU-TronClass-MCP) | 個人資料、課程公告、分組、作業上傳與存草稿流程 |
+| [andyching168/tronclass_control](https://github.com/andyching168/tronclass_control) | 個人資料、通知（`/ntf`）與通知類型、作業繳交紀錄 |
+| [GGQQmax/iclass-mcp](https://github.com/GGQQmax/iclass-mcp) | 跨課程公告（`/api/course-bulletins`）、附件下載、討論區 |
+| [eWloYW8/zju-courses-go-sdk](https://github.com/eWloYW8/zju-courses-go-sdk) | 通知、繳交紀錄、分組、成績等 endpoint 目錄 |
+| [8eoyw/zju-learning-cli](https://github.com/8eoyw/zju-learning-cli) | 附件下載、預覽 PDF、討論區分頁 |
+| [TW-RF54732/tronclass-calender](https://github.com/TW-RF54732/tronclass-calender) | 課程活動、考試列表 |
+| [yd-tw/ind-hackathon](https://github.com/yd-tw/ind-hackathon) | 海大的 `my-courses` 參數與待辦事項 |
+| [BobLiu0518/TronClass-Resource-Download](https://github.com/BobLiu0518/TronClass-Resource-Download) | 文件預覽網址 |
+| 海大 TronClass 公開的前端程式（`tronclass.ntou.edu.tw/static`） | 作業上傳、存草稿／繳交、撤回、分組作業繳交紀錄的請求格式 |
+
+驗證狀態（2026-10-12）：唯讀的 API 都已在海大實測；`uploadFile`、`saveSubmission`、`retractSubmission`、`deleteUpload` 只用 mock 測試過；`getTopic` 因為沒有討論區主題可測，尚未實測。

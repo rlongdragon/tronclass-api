@@ -124,4 +124,24 @@ Default rate limiting is set to no more than 60 requests per minute. You can adj
 tron.fetcherRPM = 200;
 ```
 
+## API Sources
+
+TronClass has no public API documentation. The endpoints and parameters here were collected from the sources below and then verified with an NTOU account on `tronclass.ntou.edu.tw`. Only endpoints and flows were referenced; no code was copied.
+
+| Source | What was referenced |
+|---|---|
+| [silvercow002/tronclass-script](https://github.com/silvercow002/tronclass-script) | NTOU CAS login flow, recently visited courses |
+| [seven-317/Tronclass-API](https://github.com/seven-317/Tronclass-API) (MIT) | Endpoints for semesters, courses, modules, bulletins, materials, exam scores; response checking, pagination and download filename parsing |
+| [RX5950XT/FJU-TronClass-MCP](https://github.com/RX5950XT/FJU-TronClass-MCP) | Profile, course bulletins, groups, homework upload and draft flow |
+| [andyching168/tronclass_control](https://github.com/andyching168/tronclass_control) | Profile, notifications (`/ntf`) and their types, submission lists |
+| [GGQQmax/iclass-mcp](https://github.com/GGQQmax/iclass-mcp) | Cross-course bulletins (`/api/course-bulletins`), attachment download, forum |
+| [eWloYW8/zju-courses-go-sdk](https://github.com/eWloYW8/zju-courses-go-sdk) | Endpoint catalog for notifications, submissions, groups and scores |
+| [8eoyw/zju-learning-cli](https://github.com/8eoyw/zju-learning-cli) | Attachment download, preview PDF, forum paging |
+| [TW-RF54732/tronclass-calender](https://github.com/TW-RF54732/tronclass-calender) | Course activities, exam list |
+| [yd-tw/ind-hackathon](https://github.com/yd-tw/ind-hackathon) | NTOU `my-courses` parameters and todos |
+| [BobLiu0518/TronClass-Resource-Download](https://github.com/BobLiu0518/TronClass-Resource-Download) | Document preview URL |
+| NTOU TronClass public web frontend (`tronclass.ntou.edu.tw/static`) | Request formats for homework upload, draft/submit, retract and group submission lists |
+
+Verification (2026-10-12): all read APIs were verified on NTOU; `uploadFile`, `saveSubmission`, `retractSubmission` and `deleteUpload` were only tested with mocks; `getTopic` is unverified because no forum topic was available.
+
 > English version translated by AI
