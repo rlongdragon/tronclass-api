@@ -88,10 +88,14 @@ class TronClass {
     this.baseUrl = url;
   }
 
+  /**
+   * 登入。先走 CAS REST（不需要驗證碼）；REST 無法使用時才改走登入表單，
+   * 這時需要 ocr 辨識驗證碼。
+   */
   public async login(
     username: string,
     password: string,
-    ocr: (dataUrl: string) => Promise<string>
+    ocr?: (dataUrl: string) => Promise<string>
   ): Promise<loginResponse> {
     if (!username || !password) {
       return {
@@ -105,12 +109,6 @@ class TronClass {
         message: "Base URL is not set. Please call setBaseUrl first.",
       };
     }
-    if (!ocr) {
-      return {
-        success: false,
-        message: "OCR function must be provided to solve captcha.",
-      };
-    }
 
     this.ocr = ocr;
 
@@ -120,6 +118,17 @@ class TronClass {
     // 換新的 cookie jar：若舊的 CAS TGC 還有效，CAS 會直接換票導回 TronClass，
     // 不會出現登入表單，導致抓不到 lt
     this.jar = new CookieJar();
+
+    const restResult = await this.restLogin(username, password);
+    if (restResult) return restResult;
+
+    if (!ocr) {
+      return {
+        success: false,
+        message:
+          "CAS REST login is unavailable and no OCR function was provided to solve the captcha.",
+      };
+    }
 
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
@@ -313,6 +322,71 @@ class TronClass {
     );
   }
 
+  /**
+   * CAS REST 協定登入：帳密換 TGT，再換 TronClass 的 service ticket，不需要驗證碼。
+   * 回傳 undefined 表示 REST 無法使用，由呼叫端改走登入表單。
+   */
+  private async restLogin(
+    username: string,
+    password: string
+  ): Promise<loginResponse | undefined> {
+    try {
+      // 登入頁會被導到 CAS，藉此取得 CAS 主機
+      const page = await this.fetcher(`${this.baseUrl}/login?next=/user/index`);
+      await page.body?.cancel();
+      const casOrigin = new URL(page.url).origin;
+
+      const tgt = await this.fetcher(`${casOrigin}/cas/v1/tickets`, {
+        method: "POST",
+        body: new URLSearchParams({ username, password }),
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      });
+      await tgt.body?.cancel();
+      if ([400, 401, 403].includes(tgt.status)) {
+        return {
+          success: false,
+          message: "Invalid username or password.",
+          reason: "credentials",
+        };
+      }
+      const location = tgt.headers.get("location");
+      if (tgt.status !== 201 || !location) return undefined;
+
+      // CAS 回傳的 TGT 網址可能是 http，沿用 CAS 本身的協定
+      const tgtUrl = new URL(location);
+      tgtUrl.protocol = new URL(casOrigin).protocol;
+      const service = `${this.baseUrl}/api/cas-login`;
+      const st = await this.fetcher(tgtUrl.toString(), {
+        method: "POST",
+        body: new URLSearchParams({ service }),
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      });
+      const ticket = (await st.text()).trim();
+      if (!st.ok || !ticket.startsWith("ST-")) return undefined;
+
+      const session = await this.fetcher(
+        `${service}?ticket=${encodeURIComponent(ticket)}`
+      );
+      await session.body?.cancel();
+      if (!session.ok || new URL(session.url).pathname.startsWith("/cas/")) {
+        return undefined;
+      }
+
+      this.loggedIn = true;
+      // 函式庫不寫 stdout，stdout 留給呼叫端使用
+      console.error(`Login successful for user: ${username} (CAS REST)`);
+      return { success: true, message: "Login successful." };
+    } catch (e) {
+      if (e instanceof RateLimitError) throw e;
+      console.warn(
+        `CAS REST login failed, falling back to the login form: ${
+          e instanceof Error ? e.message : e
+        }`
+      );
+      return undefined;
+    }
+  }
+
   // 檢查是否已儲存憑證，有的話重新登入
   private async reAuthenticate(): Promise<void> {
     if (!this.username || !this.password) {
@@ -320,12 +394,6 @@ class TronClass {
         "Not logged in and no credentials saved for re-authentication. Please call the login method first."
       );
     }
-    if (!this.ocr) {
-      throw new Error(
-        "OCR function must be provided to solve captcha during re-authentication."
-      );
-    }
-
     console.warn(
       "Session not active or expired. Attempting to re-authenticate automatically..."
     );

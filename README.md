@@ -36,7 +36,7 @@ TRON_PASS=your_password
 TRON_BASE_URL=https://tronclass.ntou.edu.tw
 ```
 
-`example/example.js` uses `captcha-nodejs-module`, the author's own OCR module, which is not published on npm. If you don't have it, replace it with your own OCR function first (see "Login and Captcha" below), then run the example:
+`example/example.js` uses `captcha-nodejs-module`, the author's own OCR module, which is not published on npm. If you don't have it, just drop the OCR argument from `login()` (NTOU supports captcha-free CAS REST login; see "Login and Captcha" below), then run the example:
 ```bash
 npm run example
 ```
@@ -65,16 +65,22 @@ Or from a local path (change it to your local absolute path, and run `npm instal
 
 ## Login and Captcha
 
-Since 2025/10/13 the NTOU TronClass CAS login page requires a 4-digit image captcha, so the third argument of `login()` is an OCR function:
+`login()` first uses the CAS REST protocol (`/cas/v1/tickets`) to exchange the credentials for a ticket, which **needs no captcha**. NTOU supports this, so normally the credentials are enough:
+
+```javascript
+const result = await tron.login("your_username", "your_password");
+```
+
+Wrong credentials return `reason: "credentials"` without trying anything else. Only when REST is unavailable does it fall back to the CAS login page, which has required a 4-digit image captcha since 2025/10/13; that path needs the optional third argument, an OCR function:
 
 ```typescript
 type Ocr = (dataUrl: string) => Promise<string>;
 ```
 
 - `dataUrl`: the captcha image, as `data:image/jpeg;base64,...`.
-- Return value: the recognized 4-digit string. Anything other than 4 digits makes that login attempt fail immediately.
+- Return value: the recognized 4-digit string. Anything other than 4 digits makes that login attempt fail immediately; when CAS rejects the captcha, a new one is fetched and retried.
 
-When a session expires, the library logs in again with the credentials and OCR function given to `login()`, so the OCR function may be called again during any later API call.
+When a session expires, the library logs in again with the same credentials (and the OCR function, if given).
 
 The login flow follows NTOU's CAS login page; other schools' login pages may differ.
 
@@ -87,7 +93,7 @@ import Tronclass from "tronclass-api";
 
 const tron = new Tronclass();
 tron.setBaseUrl("https://tronclass.ntou.edu.tw"); // Your school's TronClass URL
-const result = await tron.login("your_username", "your_password", ocrFunction);
+const result = await tron.login("your_username", "your_password");
 if (!result.success) throw new Error(result.message);
 
 const courses = await tron.recentlyVisitedCourses();

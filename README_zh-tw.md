@@ -36,7 +36,7 @@ TRON_PASS=你的密碼
 TRON_BASE_URL=https://tronclass.ntou.edu.tw
 ```
 
-`example/example.js` 使用的 `captcha-nodejs-module` 是作者自己的 OCR 模組，沒有發布在 npm 上。如果你沒有這個模組，請先換成你自己的 OCR 函數（見下方「登入與驗證碼」），然後執行範例：
+`example/example.js` 使用的 `captcha-nodejs-module` 是作者自己的 OCR 模組，沒有發布在 npm 上。如果你沒有這個模組，把 `login()` 的 OCR 參數拿掉即可（海大支援免驗證碼的 CAS REST 登入，見下方「登入與驗證碼」），然後執行範例：
 ```bash
 npm run example
 ```
@@ -65,16 +65,22 @@ npm run example
 
 ## 登入與驗證碼
 
-海大 TronClass 的 CAS 登入頁自 2025/10/13 起需要輸入 4 位數字的圖片驗證碼，因此 `login()` 的第三個參數是一個 OCR 函數：
+`login()` 會先走 CAS 的 REST 協定（`/cas/v1/tickets`），用帳密換取 ticket 登入，**不需要驗證碼**。海大目前支援這個方式，所以一般情況下只要帳密即可：
+
+```javascript
+const result = await tron.login("your_username", "your_password");
+```
+
+帳密錯誤時回傳 `reason: "credentials"`，不會再嘗試其他方式。只有 REST 無法使用時，才會改走 CAS 登入頁；登入頁自 2025/10/13 起需要 4 位數字的圖片驗證碼，這時需要第三個參數的 OCR 函數：
 
 ```typescript
 type Ocr = (dataUrl: string) => Promise<string>;
 ```
 
 - `dataUrl`：驗證碼圖片，格式為 `data:image/jpeg;base64,...`。
-- 回傳值：辨識出的 4 位數字字串。不是 4 位數字時，這次登入會直接回傳失敗。
+- 回傳值：辨識出的 4 位數字字串。不是 4 位數字時，這次登入會直接回傳失敗；CAS 判定驗證碼錯誤時會換一張重試。
 
-session 過期時，lib 會用登入時傳入的帳密與 OCR 函數自動重新登入，所以 OCR 函數可能會在之後任何一次 API 呼叫中再被呼叫。
+session 過期時，lib 會用同樣的帳密（與 OCR 函數，若有提供）自動重新登入。
 
 目前的登入流程是依照海大的 CAS 登入頁實作，其他學校的登入頁可能不同。
 
@@ -87,7 +93,7 @@ import Tronclass from "tronclass-api";
 
 const tron = new Tronclass();
 tron.setBaseUrl("https://tronclass.ntou.edu.tw"); // 你學校的 TronClass 網址
-const result = await tron.login("your_username", "your_password", ocrFunction);
+const result = await tron.login("your_username", "your_password");
 if (!result.success) throw new Error(result.message);
 
 const courses = await tron.recentlyVisitedCourses();
