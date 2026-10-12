@@ -8,58 +8,94 @@ An unofficial TronClass (tronclass.com) API library, encapsulating login, sessio
 ## Key Features
 
 - Automatically handles sessions after login using a cookie jar.
-- Parses the login page to extract the CSRF token (lt) and complete form-based login.
+- Parses the login page to extract the CSRF token (lt) and complete form-based login; the captcha is solved by an OCR function supplied by the caller.
+- Detects expired sessions (redirects back to the CAS login page), logs in again automatically and resends the request.
 - Automatic retries and a simple error handling mechanism.
 - Provides simple wrapper methods (e.g., `recentlyVisitedCourses`) and a generic `call` method to invoke any API endpoint.
+- All logs go to stderr; stdout is left untouched.
 
 ## Directory Structure
 
 - `src/` - TypeScript source code.
-- `dist/` - Compiled JavaScript (if built).
+- `dist/` - Compiled JavaScript and type declarations (built automatically by `npm install`).
 - `example/` - Usage example (`example/example.js`).
 
 ## Quick Start
 
-After cloning this project:
+After cloning this project, install the dependencies; the `prepare` script builds `dist/` automatically:
 ```bash
 npm install
-npm run build
 ```
 
-Fill in your TronClass username and password in `example/example.js`, then run the example:
+Create a `.env` file in the project root (it is already listed in `.gitignore`):
+```
+TRON_USER=your_username
+TRON_PASS=your_password
+TRON_BASE_URL=https://tronclass.ntou.edu.tw
+```
+
+`example/example.js` uses `captcha-nodejs-module`, the author's own OCR module, which is not published on npm. If you don't have it, replace it with your own OCR function first (see "Login and Captcha" below), then run the example:
 ```bash
 npm run example
 ```
 
-## Usage Instructions
-Since this project hasn't been uploaded to npm yet, you can import it directly from a local path:
+## Installation
 
-First, create a new Node.js project in another folder, then add the following dependency to your `package.json` (please change the path to your local absolute path):
+This project hasn't been published to npm yet. You can add it in either of these ways.
 
-Due to the addition of reCAPTCHA to the NTOU Tronclass login page on 2025/10/13, the OCR text recognition function has been updated.
-You are required to add an OCR parameter to the login function and pass in a function capable of recognizing text from an image.
-If you do not need OCR, you can refer to the login function in the previous version of index.ts.
+From GitHub (npm builds it during installation):
+```json
+{
+  "dependencies": {
+    "tronclass-api": "github:rlongdragon/tronclass-api"
+  }
+}
+```
 
+Or from a local path (change it to your local absolute path, and run `npm install` in that directory first so `dist/` exists):
 ```json
 {
   "dependencies": {
     "tronclass-api": "file:/absolute/path/to/tronclass-api"
-  } 
+  }
 }
 ```
 
-Then, use it in your code like this:
+## Login and Captcha
+
+Since 2025/10/13 the NTOU TronClass CAS login page requires a 4-digit image captcha, so the third argument of `login()` is an OCR function:
+
+```typescript
+type Ocr = (dataUrl: string) => Promise<string>;
+```
+
+- `dataUrl`: the captcha image, as `data:image/jpeg;base64,...`.
+- Return value: the recognized 4-digit string. Anything other than 4 digits makes that login attempt fail immediately.
+
+When a session expires, the library logs in again with the credentials and OCR function given to `login()`, so the OCR function may be called again during any later API call.
+
+The login flow follows NTOU's CAS login page; other schools' login pages may differ.
+
+## Usage Instructions
+
+This package is an ES module, so use it from an ESM project:
 
 ```javascript
-import { Tronclass } from "tronclass-api";
+import Tronclass from "tronclass-api";
 
-(async () => {
-  const tron = new Tronclass();
-  tron.setBaseUrl("https://tronclass.com"); // Your school's TronClass URL
-  await tron.login("your_username", "your_password");
-  const courses = await tron.recentlyVisitedCourses();
-  console.log(courses);
-})();
+const tron = new Tronclass();
+tron.setBaseUrl("https://tronclass.ntou.edu.tw"); // Your school's TronClass URL
+const result = await tron.login("your_username", "your_password", ocrFunction);
+if (!result.success) throw new Error(result.message);
+
+const courses = await tron.recentlyVisitedCourses();
+console.log(courses);
+```
+
+TypeScript projects can import the types directly:
+
+```typescript
+import Tronclass, { type Course, type TodoList } from "tronclass-api";
 ```
 
 ## Rate limiting
@@ -67,6 +103,8 @@ import { Tronclass } from "tronclass-api";
 To avoid being blocked by the server due to overly frequent requests, the Tronclass class includes a simple rate-limiting mechanism. When requests are too frequent, a `RateLimitError` is thrown and includes a `waitTime` property indicating the suggested wait time (milliseconds). Callers can use this information to decide when to retry.
 
 ```typescript
+import Tronclass, { RateLimitError } from "tronclass-api";
+
 try {
   const courses = await tron.recentlyVisitedCourses();
 } catch (error) {
@@ -81,7 +119,7 @@ try {
 ```
 Default rate limiting is set to no more than 60 requests per minute. You can adjust this limit as needed.
 ```typescript
-tronclass.fetcherRPM = 200;
+tron.fetcherRPM = 200;
 ```
 
-> English vision translate by AI
+> English version translated by AI
