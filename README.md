@@ -4,6 +4,8 @@ English | [中文](./README_zh-tw.md)
 
 An unofficial TronClass (tronclass.com) API library, encapsulating login, session maintenance, and common API calls to facilitate automated access to TronClass user data and course information in Node.js / TypeScript projects.
 > Script source: [@silvercow002/tronclass-script](https://github.com/silvercow002/tronclass-script)
+>
+> References [@seven-317/Tronclass-API](https://github.com/seven-317/Tronclass-API) (MIT) for response checking, pagination, homework endpoints and download filename parsing
 
 ## Key Features
 

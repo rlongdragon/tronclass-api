@@ -4,6 +4,8 @@
 
 一個非官方的 TronClass（tronclass.com）API 工具庫，封裝登入、會話維護與常用 API 呼叫，方便在 Node.js / TypeScript 專案中自動化存取 TronClass 的使用者資料與課程資訊。
 > 腳本來源 [@silvercow002/tronclass-script](https://github.com/silvercow002/tronclass-script)
+>
+> 參考 [@seven-317/Tronclass-API](https://github.com/seven-317/Tronclass-API)（MIT）：API 回應檢查、自動翻頁、作業相關 endpoint 與下載檔名解析的做法
 
 ## 主要功能
 
