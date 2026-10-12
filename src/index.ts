@@ -94,6 +94,9 @@ class TronClass {
     this.username = username;
     this.password = password;
     this.loggedIn = false;
+    // 換新的 cookie jar：若舊的 CAS TGC 還有效，CAS 會直接換票導回 TronClass，
+    // 不會出現登入表單，導致抓不到 lt
+    this.jar = new CookieJar();
 
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
@@ -154,7 +157,6 @@ class TronClass {
           submit: "登錄", // 登入按鈕的文字，可能因網站而異
         });
 
-        console.log(casBaseUrl);
         const loginResponse = await this.fetcher(
           `${casBaseUrl}/cas/login?next=/user/index`,
           {
@@ -175,7 +177,8 @@ class TronClass {
         }
 
         this.loggedIn = true;
-        console.log(`Login successful for user: ${username}`);
+        // 函式庫不寫 stdout，stdout 留給呼叫端使用
+        console.error(`Login successful for user: ${username}`);
         return { success: true, message: "Login successful." };
       } catch (e) {
         console.error(e);
@@ -227,11 +230,11 @@ class TronClass {
 
   /**
    * 發送一個經過認證的 API 請求到指定的端點。
-   * 會透過內部 fetcher 自動處理 Cookie。
+   * 會透過內部 fetcher 自動處理 Cookie；偵測到 session 失效時會自動重新登入並重送一次。
    * @param {string} endpoint - 要呼叫的 API 端點 (例如："/user/data")。
    * @param {RequestInit} [config={}] - 可選的 fetch 配置物件。
    * @returns {Promise<Response>} - 原始的 fetch Response 物件。
-   * @throws {Error} 如果 baseUrl 未設定或未登入。
+   * @throws {Error} 如果 baseUrl 未設定、未登入，或重新登入後 session 仍無效。
    */
   public async call(
     endpoint: string,
@@ -243,43 +246,79 @@ class TronClass {
       );
     }
 
-    // 檢查是否已登入。如果未登入且已儲存憑證，則嘗試自動重新驗證。
-    if (!this.loggedIn) {
-      if (this.username && this.password) {
-        console.warn(
-          "Session not active or expired. Attempting to re-authenticate automatically..."
-        );
-        // TODO: 這裡的 ocr 函數需要從外部傳入，或者有一個預設的處理方式
-        // 目前暫時使用一個簡單的同步函數來避免錯誤
-        // 這裡應該改成更合適的方式來處理 OCR
-        if (!this.ocr) {
-          throw new Error(
-            "OCR function must be provided to solve captcha during re-authentication."
-          );
-        }
-        const loginResult = await this.login(
-          this.username,
-          this.password,
-          this.ocr!
-        );
-        if (!loginResult.success) {
-          throw new Error(
-            `Automatic re-authentication failed: ${loginResult.message}. Please log in manually.`
-          );
-        }
-        console.log("Automatic re-authentication successful.");
-      } else {
-        throw new Error(
-          "Not logged in and no credentials saved for re-authentication. Please call the login method first."
-        );
-      }
-    }
-
     const fullUrl = `${this.baseUrl}${
       endpoint.startsWith("/") ? endpoint : `/${endpoint}`
     }`;
-    const response = await this.fetcher(fullUrl, config);
-    return response;
+
+    // 第二輪只會在第一輪偵測到 session 失效、已重新登入後執行
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (!this.loggedIn) {
+        await this.reAuthenticate();
+      }
+
+      const response = await this.fetcher(fullUrl, config);
+      if (!this.isSessionExpired(fullUrl, response)) {
+        return response;
+      }
+
+      await response.body?.cancel();
+      this.loggedIn = false;
+      console.warn("Session expired. Re-authenticating...");
+    }
+
+    throw new Error(
+      "Session is still invalid after re-authentication. Please log in manually."
+    );
+  }
+
+  // 檢查是否已儲存憑證，有的話重新登入
+  private async reAuthenticate(): Promise<void> {
+    if (!this.username || !this.password) {
+      throw new Error(
+        "Not logged in and no credentials saved for re-authentication. Please call the login method first."
+      );
+    }
+    if (!this.ocr) {
+      throw new Error(
+        "OCR function must be provided to solve captcha during re-authentication."
+      );
+    }
+
+    console.warn(
+      "Session not active or expired. Attempting to re-authenticate automatically..."
+    );
+    const loginResult = await this.login(
+      this.username,
+      this.password,
+      this.ocr
+    );
+    if (!loginResult.success) {
+      throw new Error(
+        `Automatic re-authentication failed: ${loginResult.message}. Please log in manually.`
+      );
+    }
+    console.error("Automatic re-authentication successful.");
+  }
+
+  /**
+   * 判斷回應是否代表 session 已失效。
+   * 海大 TronClass 失效時會 302 到 CAS 登入頁，fetch 跟隨後得到 200 HTML 而非 JSON；
+   * 若 CAS 的 TGC 仍有效，則會自動換票並導回 TronClass 網頁（非 API 路徑）。
+   */
+  private isSessionExpired(requestUrl: string, response: Response): boolean {
+    if (response.status === 401) return true;
+    if (!response.url) return false;
+
+    const requested = new URL(requestUrl);
+    const final = new URL(response.url);
+    if (final.pathname.startsWith("/cas/")) return true;
+
+    const isApiPath = (path: string) => /^\/(api|ntf)\//.test(path);
+    return (
+      isApiPath(requested.pathname) &&
+      final.host === requested.host &&
+      !isApiPath(final.pathname)
+    );
   }
 
   ///////////// API /////////////
