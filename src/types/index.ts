@@ -136,6 +136,9 @@ export interface Activity {
   is_closed?: boolean;
   is_in_progress?: boolean;
   submit_by_group?: boolean;
+  /** 分組作業的分組集合（getMyGroup 用）；非分組作業為 0 */
+  group_set_id?: number;
+  group_set_name?: string;
   data?: {
     description?: string;
     mode?: string;
@@ -242,5 +245,30 @@ export interface Topic {
   content?: string;
   created_at?: string;
   created_by?: { id?: number; name?: string; [key: string]: unknown };
+  [key: string]: unknown;
+}
+
+/** 分組集合中的一組（海大實測） */
+export interface Group {
+  id: number;
+  name: string;
+  group_set_id?: number;
+  /** 組長的 user id */
+  leaders?: number[];
+  /** 組員的 user id */
+  members?: number[];
+  /** getMyGroup 才有：組員的姓名與學號 */
+  group_users?: { id: number; name: string; user_no?: string; [key: string]: unknown }[];
+  [key: string]: unknown;
+}
+
+/** GET /api/courses/{id}/group-sets 的 group_sets 項目（海大實測） */
+export interface GroupSet {
+  id: number;
+  name: string;
+  course_id?: number;
+  group_count?: number;
+  /** 學生只會看到自己所在的組 */
+  groups?: Group[];
   [key: string]: unknown;
 }

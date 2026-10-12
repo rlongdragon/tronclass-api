@@ -9,6 +9,8 @@ import {
   DownloadedFile,
   Exam,
   ExamScore,
+  Group,
+  GroupSet,
   HomeworkActivity,
   loginResponse,
   NotificationList,
@@ -716,6 +718,31 @@ class TronClass {
     if (!res.ok || (typeof code === "number" && code >= 40000)) {
       throw new ApiError(res.status, endpoint, body);
     }
+  }
+
+  // ---- 分組 ----
+
+  /** 課程的分組集合；學生在 groups 只會看到自己所在的組 */
+  public async getCourseGroupSets(courseId: number): Promise<GroupSet[]> {
+    const res = await this.requestJson(`/api/courses/${courseId}/group-sets`);
+    return res.group_sets;
+  }
+
+  /** 我在某個分組集合中的組別（含組員）；groupSetId 也可從作業的 group_set_id 取得 */
+  public async getMyGroup(groupSetId: number): Promise<Group> {
+    const res = await this.requestJson(`/api/group-sets/${groupSetId}/group`);
+    return res.group;
+  }
+
+  /** 分組作業中某組的歷次繳交（含草稿） */
+  public async getGroupSubmissionList(
+    activityId: number,
+    groupId: number
+  ): Promise<Submission[]> {
+    const res = await this.requestJson(
+      `/api/activities/${activityId}/groups/${groupId}/submission_list`
+    );
+    return res.list;
   }
 
   // ---- 考試與成績（唯讀） ----
