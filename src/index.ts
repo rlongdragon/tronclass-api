@@ -1,6 +1,8 @@
 import fetchCookie from "fetch-cookie";
 import {
+  Activity,
   Course,
+  DownloadedFile,
   HomeworkActivity,
   loginResponse,
   TodoList,
@@ -352,6 +354,62 @@ class TronClass {
 
     return res.homework_activities;
   }
+
+  /** 課程內所有學習活動（教材、作業、影片、連結等），附件在 uploads */
+  public async getCourseActivities(courseId: number): Promise<Activity[]> {
+    const res = await this.call(
+      `/api/courses/${courseId}/activities?sub_course_id=0`
+    ).then((res) => res.json());
+
+    return res.activities;
+  }
+
+  public async getActivity(activityId: number): Promise<Activity> {
+    return this.call(`/api/activities/${activityId}?sub_course_id=0`).then(
+      (res) => res.json()
+    );
+  }
+
+  /** 下載附件；referenceId 為 activity.uploads[].reference_id */
+  public async downloadUpload(referenceId: number): Promise<DownloadedFile> {
+    const res = await this.call(`/api/uploads/reference/${referenceId}/blob`);
+    if (!res.ok) {
+      await res.body?.cancel();
+      throw new Error(`Download failed: ${res.status} ${res.statusText}`);
+    }
+
+    return {
+      filename: parseFilename(res.headers.get("content-disposition")),
+      contentType:
+        res.headers.get("content-type") ?? "application/octet-stream",
+      data: Buffer.from(await res.arrayBuffer()),
+    };
+  }
+
+  /** 文件轉成 PDF 的預覽網址（有時效）；allow_download 為 false 時也能取得 */
+  public async getUploadPreviewUrl(referenceId: number): Promise<string> {
+    const res = await this.call(
+      `/api/uploads/reference/document/${referenceId}/url?preview=true`
+    ).then((res) => res.json());
+
+    return res.url;
+  }
+}
+
+// 取出 Content-Disposition 的檔名：優先用 RFC 5987 的 filename*，否則用 filename。
+// 伺服器若直接送 UTF-8 位元組，fetch 會以 latin1 解讀，需轉回 UTF-8。
+function parseFilename(disposition: string | null): string | undefined {
+  if (!disposition) return undefined;
+
+  const encoded = disposition.match(/filename\*\s*=\s*UTF-8''([^;]+)/i);
+  if (encoded) return decodeURIComponent(encoded[1].trim());
+
+  const plain = disposition.match(/filename\s*=\s*"?([^";]+)"?/i);
+  if (!plain) return undefined;
+  const name = plain[1].trim();
+  return /[\u0080-ÿ]/.test(name)
+    ? Buffer.from(name, "latin1").toString("utf8")
+    : name;
 }
 
 export default TronClass;

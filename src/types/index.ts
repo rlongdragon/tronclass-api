@@ -48,3 +48,38 @@ export interface HomeworkActivity {
   uploads?: unknown[];
   [key: string]: unknown;
 }
+
+/** activity.uploads[] 的附件 */
+export interface Upload {
+  id: number;
+  name: string;
+  /** 下載用的 ID（downloadUpload / getUploadPreviewUrl） */
+  reference_id: number;
+  size?: number;
+  type?: string;
+  allow_download?: boolean;
+  status?: string;
+  [key: string]: unknown;
+}
+
+/** GET /api/courses/{id}/activities 的 activities 項目 */
+export interface Activity {
+  id: number;
+  title: string;
+  /** material、homework、online_video、web_link 等 */
+  type: string;
+  course_id?: number;
+  start_time?: string | null;
+  end_time?: string | null;
+  is_closed?: boolean;
+  data?: { description?: string; [key: string]: unknown };
+  uploads?: Upload[];
+  [key: string]: unknown;
+}
+
+export interface DownloadedFile {
+  /** 取自 Content-Disposition，伺服器沒給時為 undefined */
+  filename?: string;
+  contentType: string;
+  data: Buffer;
+}
