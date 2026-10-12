@@ -1,17 +1,31 @@
 import fetchCookie from "fetch-cookie";
 import {
+  AcademicYear,
   Activity,
+  Bulletin,
+  BulletinQuery,
   Course,
+  CourseModule,
   DownloadedFile,
+  Exam,
+  ExamScore,
   HomeworkActivity,
   loginResponse,
+  NotificationList,
+  Profile,
+  Semester,
+  Submission,
+  SubmissionResult,
   TodoList,
+  Topic,
+  TopicCategory,
+  CreatedUpload,
 } from "./types/index.js";
 export * from "./types/index.js"; // 導出 src/types/index.ts 中的所有型別
 import { CookieJar } from "tough-cookie";
 import { JSDOM } from "jsdom";
 
-// 自訂錯誤：當達到速率限制時拋出，並攜帶可程式存取的等待時間 (ms)
+// 速率限制需要等待超過 rateLimitMaxWaitMs 時拋出，並攜帶可程式存取的等待時間 (ms)
 export class RateLimitError extends Error {
   waitTime: number;
   constructor(waitTime: number, message?: string) {
@@ -31,36 +45,41 @@ class TronClass {
   private fetcher: typeof fetch;
   private loggedIn: boolean = false;
   private ocr: ((dataUrl: string) => Promise<string>) | undefined;
-  private fetcherUsedHistory: Date[] = [];
+  // 送出請求的時間點（performance.now()，不受系統時間調整影響）
+  private fetcherUsedHistory: number[] = [];
   public fetcherRPM: number = 60; // 每分鐘請求數
+  // 超過速率限制時最多等待多久（ms），需要等更久就拋出 RateLimitError
+  public rateLimitMaxWaitMs: number = Infinity;
 
   constructor() {
     this.jar = new CookieJar();
 
-    this.fetcher = (
+    this.fetcher = async (
       input: RequestInfo | URL,
       init?: RequestInit
     ): Promise<Response> => {
-      const rateLimit = this.rateLimiter();
-      if (!rateLimit.ok) {
-        throw new RateLimitError(rateLimit.waitTime ?? 0);
-      }
+      await this.waitForRateLimit();
       return fetchCookie(fetch, this.jar)(input, init);
     };
   }
 
-  private rateLimiter() {
-    const now = new Date();
-    this.fetcherUsedHistory = this.fetcherUsedHistory.filter(
-      (timestamp) => now.getTime() - timestamp.getTime() < 60000
-    );
-    if (this.fetcherUsedHistory.length >= this.fetcherRPM) {
-      const waitTime =
-        60000 - (now.getTime() - this.fetcherUsedHistory[0].getTime());
-      return { ok: false, waitTime };
+  // 超過每分鐘請求數時，等到最舊的一筆請求滿 60 秒再送出
+  private async waitForRateLimit(): Promise<void> {
+    for (;;) {
+      const now = performance.now();
+      this.fetcherUsedHistory = this.fetcherUsedHistory.filter(
+        (timestamp) => now - timestamp < 60000
+      );
+      if (this.fetcherUsedHistory.length < this.fetcherRPM) {
+        this.fetcherUsedHistory.push(now);
+        return;
+      }
+      const waitTime = 60000 - (now - this.fetcherUsedHistory[0]);
+      if (waitTime > this.rateLimitMaxWaitMs) {
+        throw new RateLimitError(waitTime);
+      }
+      await new Promise((resolve) => setTimeout(resolve, waitTime));
     }
-    this.fetcherUsedHistory.push(now);
-    return { ok: true };
   }
 
   public setBaseUrl(url: string): void {
@@ -108,9 +127,8 @@ class TronClass {
         );
         const text = await response.text();
 
-        const responseUrl = response.url;
-        // cas baseurl
-        const casBaseUrl = responseUrl.split(".tw/")[0] + ".tw";
+        // cas baseurl：登入頁被導到的 CAS 主機
+        const casBaseUrl = new URL(response.url).origin;
 
         const dom = new JSDOM(text);
         // 使用可選鏈操作符 `?.` 安全地獲取值，並檢查其是否存在
@@ -119,6 +137,12 @@ class TronClass {
             'input[name="lt"]'
           ) as HTMLInputElement | null
         )?.value;
+        const execution =
+          (
+            dom.window.document.querySelector(
+              'input[name="execution"]'
+            ) as HTMLInputElement | null
+          )?.value ?? "e1s1";
 
         // get captcha image data URL
         const imgRes = await this.fetcher(`${casBaseUrl}/cas/captcha.jpg?`);
@@ -140,6 +164,7 @@ class TronClass {
           return {
             success: false,
             message: "Invalid captcha code. Must be 4 digits.",
+            reason: "captcha",
           };
         }
 
@@ -154,7 +179,7 @@ class TronClass {
           password: this.password,
           captcha: captchaCode,
           lt: lt,
-          execution: "e1s1",
+          execution,
           _eventId: "submit",
           submit: "登錄", // 登入按鈕的文字，可能因網站而異
         });
@@ -172,9 +197,22 @@ class TronClass {
         const loginText = await loginResponse.text();
         // 判斷登入是否成功的邏輯：如果響應包含 "forget-password" 字串，則認為登入失敗
         if (loginText.includes("forget-password")) {
+          // CAS 把錯誤原因放在 #msg，例如「驗證碼不正確」
+          const casMessage = new JSDOM(loginText).window.document
+            .querySelector("#msg")
+            ?.textContent?.trim();
+          const captchaWrong = /驗證碼|验证码|captcha/i.test(casMessage ?? "");
+          // 驗證碼錯誤時換一張重試（OCR 偶爾會讀錯）
+          if (captchaWrong && attempt < 2) {
+            console.warn(`Incorrect captcha (attempt ${attempt + 1}). Retrying...`);
+            continue;
+          }
           return {
             success: false,
-            message: "Invalid username or password.",
+            message: captchaWrong
+              ? "Incorrect captcha."
+              : casMessage || "Invalid username or password.",
+            reason: captchaWrong ? "captcha" : "credentials",
           };
         }
 
@@ -323,59 +361,187 @@ class TronClass {
     );
   }
 
-  ///////////// API /////////////
-  public recentlyVisitedCourses() {
-    return this.call("/api/user/recently-visited-courses").then((res) =>
-      res.json()
-    );
+  /** 呼叫 API 並解析 JSON；非 2xx 或回應不是 JSON 時拋出 ApiError */
+  private async requestJson<T = any>(
+    endpoint: string,
+    config: RequestInit = {}
+  ): Promise<T> {
+    const res = await this.call(endpoint, config);
+    const contentType = res.headers.get("content-type") ?? "";
+    if (!res.ok || !contentType.includes("json")) {
+      const body = await res.text().catch(() => "");
+      throw new ApiError(res.status, endpoint, body);
+    }
+    return res.json() as Promise<T>;
   }
 
+  private sendJson<T = any>(
+    method: "POST" | "PUT",
+    endpoint: string,
+    body: unknown
+  ): Promise<T> {
+    return this.requestJson<T>(endpoint, {
+      method,
+      body: JSON.stringify(body),
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  /** 依 page / pages 翻完所有頁，key 為回應中放資料陣列的欄位 */
+  private async getAllPages<T>(
+    endpoint: string,
+    key: string,
+    params: QueryParams = {},
+    pageSize = 100
+  ): Promise<T[]> {
+    const items: T[] = [];
+    for (let page = 1; page <= MAX_PAGES; page++) {
+      const res = await this.requestJson(
+        endpoint + query({ ...params, page, page_size: pageSize })
+      );
+      const batch: T[] = res[key] ?? [];
+      items.push(...batch);
+      if (batch.length === 0 || !res.pages || page >= res.pages) break;
+      if (page === MAX_PAGES) {
+        console.warn(
+          `${endpoint}: stopped at ${MAX_PAGES} of ${res.pages} pages; results are incomplete.`
+        );
+      }
+    }
+    return items;
+  }
+
+  ///////////// API /////////////
+
+  // ---- 使用者 ----
+
+  public profile(): Promise<Profile> {
+    return this.requestJson("/api/profile");
+  }
+
+  public async mySemesters(): Promise<Semester[]> {
+    const res = await this.requestJson("/api/my-semesters");
+    return res.semesters;
+  }
+
+  public async myAcademicYears(): Promise<AcademicYear[]> {
+    const res = await this.requestJson("/api/my-academic-years");
+    return res.academic_years;
+  }
+
+  // ---- 課程 ----
+
+  public recentlyVisitedCourses() {
+    return this.requestJson("/api/user/recently-visited-courses");
+  }
+
+  /**
+   * 我的課程。conditions 例如 { status: ["ongoing"] } 只取進行中的課程；
+   * fields 為 TronClass 的欄位選擇語法，例如 "id,name,instructors(id,name)"。
+   */
+  public myCourses(
+    conditions: object = {},
+    fields?: string | null,
+    showScorePassedStatus: boolean = false
+  ): Promise<Course[]> {
+    return this.getAllPages("/api/my-courses", "courses", {
+      conditions: Object.keys(conditions).length ? conditions : undefined,
+      fields,
+      showScorePassedStatus: showScorePassedStatus || undefined,
+    });
+  }
+
+  public getCourse(courseId: number): Promise<Course> {
+    return this.requestJson(`/api/courses/${courseId}`);
+  }
+
+  /** 課程的週次／章節 */
+  public async getCourseModules(courseId: number): Promise<CourseModule[]> {
+    const res = await this.requestJson(`/api/courses/${courseId}/modules`);
+    return res.modules;
+  }
+
+  // ---- 待辦 ----
+
   public async todos(): Promise<TodoList[]> {
-    const res = await this.call("/api/todos").then((res) => res.json());
+    const res = await this.requestJson("/api/todos");
     return res.todo_list;
   }
 
-  public async myCourses(
-    conditions: object,
-    fields: any,
-    showScorePassedStatus: boolean = false
-  ): Promise<Course[]> {
-    const res = await this.call("/api/my-courses").then((res) => res.json());
+  // ---- 公告與通知 ----
 
-    return res.courses;
+  /** 課程公告（預設為我所有課程）；日期格式為 YYYY-MM-DD，留空表示不限 */
+  public async courseBulletins(
+    options: BulletinQuery & { page?: number; pageSize?: number } = {}
+  ): Promise<Bulletin[]> {
+    const { page = 1, pageSize = 20, ...filters } = options;
+    const res = await this.requestJson(
+      "/api/course-bulletins" +
+        query({
+          conditions: bulletinConditions(filters),
+          page,
+          page_size: pageSize,
+        })
+    );
+    return res.bulletins;
   }
 
-  public async getHomeworkActivitiesByCourseId(
-    courseId: number
-  ): Promise<HomeworkActivity[]> {
-    const res = await this.call(
-      `api/courses/${courseId}/homework-activities`
-    ).then((res) => res.json());
-
-    return res.homework_activities;
+  public async getCourseBulletins(
+    courseId: number,
+    options: BulletinQuery = {}
+  ): Promise<Bulletin[]> {
+    const res = await this.requestJson(
+      `/api/courses/${courseId}/bulletins` +
+        query({ conditions: bulletinConditions(options) })
+    );
+    return res.bulletins;
   }
+
+  /** 全校公告 */
+  public async orgBulletins(page = 1, pageSize = 20): Promise<Bulletin[]> {
+    const res = await this.requestJson(
+      "/api/org-bulletin/bulletins" +
+        query({ page, page_size: pageSize, conditions: {} })
+    );
+    return res.bulletins;
+  }
+
+  /** 通知；userId 可從 profile().id 取得，types 例如 ["homework_expiring"] */
+  public notifications(
+    userId: number,
+    options: { offset?: number; limit?: number; types?: string[] } = {}
+  ): Promise<NotificationList> {
+    const { offset = 0, limit = 20, types = [] } = options;
+    const typeParams = types
+      .map((t) => `&types=${encodeURIComponent(t)}`)
+      .join("");
+    return this.requestJson(
+      `/ntf/users/${userId}/notifications` +
+        query({ offset, limit, additionalFields: "unread_count" }) +
+        typeParams
+    );
+  }
+
+  // ---- 學習活動、教材與下載 ----
 
   /** 課程內所有學習活動（教材、作業、影片、連結等），附件在 uploads */
   public async getCourseActivities(courseId: number): Promise<Activity[]> {
-    const res = await this.call(
+    const res = await this.requestJson(
       `/api/courses/${courseId}/activities?sub_course_id=0`
-    ).then((res) => res.json());
-
+    );
     return res.activities;
   }
 
-  public async getActivity(activityId: number): Promise<Activity> {
-    return this.call(`/api/activities/${activityId}?sub_course_id=0`).then(
-      (res) => res.json()
-    );
+  public getActivity(activityId: number): Promise<Activity> {
+    return this.requestJson(`/api/activities/${activityId}?sub_course_id=0`);
   }
 
   /** 下載附件；referenceId 為 activity.uploads[].reference_id */
   public async downloadUpload(referenceId: number): Promise<DownloadedFile> {
     const res = await this.call(`/api/uploads/reference/${referenceId}/blob`);
     if (!res.ok) {
-      await res.body?.cancel();
-      throw new Error(`Download failed: ${res.status} ${res.statusText}`);
+      const body = await res.text().catch(() => "");
+      throw new ApiError(res.status, `/api/uploads/reference/${referenceId}/blob`, body);
     }
 
     return {
@@ -388,12 +554,253 @@ class TronClass {
 
   /** 文件轉成 PDF 的預覽網址（有時效）；allow_download 為 false 時也能取得 */
   public async getUploadPreviewUrl(referenceId: number): Promise<string> {
-    const res = await this.call(
+    const res = await this.requestJson(
       `/api/uploads/reference/document/${referenceId}/url?preview=true`
-    ).then((res) => res.json());
-
+    );
     return res.url;
   }
+
+  // ---- 作業 ----
+
+  public getHomeworkActivitiesByCourseId(
+    courseId: number
+  ): Promise<HomeworkActivity[]> {
+    return this.getAllPages(
+      `/api/courses/${courseId}/homework-activities`,
+      "homework_activities"
+    );
+  }
+
+  /** 我在某份作業的歷次繳交（含草稿、分數與老師評語）；userId 可從 profile().id 取得 */
+  public async getSubmissionList(
+    activityId: number,
+    userId: number
+  ): Promise<Submission[]> {
+    const res = await this.requestJson(
+      `/api/activities/${activityId}/students/${userId}/submission_list`
+    );
+    return res.list;
+  }
+
+  /**
+   * 上傳檔案供繳交作業使用，回傳的 id 放進 saveSubmission 的 uploadIds。
+   * 檔案本體直接送到 upload_url（可能是另一台主機，網址本身帶 token），不帶 TronClass 的 cookie。
+   */
+  public async uploadFile(
+    name: string,
+    data: Buffer,
+    contentType = "application/octet-stream"
+  ): Promise<CreatedUpload> {
+    const upload = await this.sendJson<CreatedUpload>("POST", "/api/uploads", {
+      name,
+      size: data.length,
+      parent_type: null,
+      parent_id: 0,
+      is_scorm: false,
+      is_wmpkg: false,
+      source: "",
+      is_marked_attachment: false,
+      embed_material_type: "",
+    });
+    if (!upload.upload_url) {
+      throw new Error("Upload record has no upload_url.");
+    }
+    // upload_url 也可能是相對路徑
+    const uploadUrl = new URL(upload.upload_url, this.baseUrl).toString();
+
+    try {
+      let res: Response;
+      if (upload.storage_type === "S3" && upload.transcoder === "WRPC") {
+        res = await fetch(uploadUrl, {
+          method: "PUT",
+          body: new Uint8Array(data),
+          headers: { "Content-Type": contentType },
+        });
+        if (res.ok) {
+          // callback 的回應內容不重要，只看是否成功
+          res = await this.call(`/internal-api/upload/callback/${upload.id}`, {
+            method: "POST",
+            body: JSON.stringify({ file_key: upload.id }),
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+      } else if (upload.storage_type === "QINIU") {
+        throw new Error("QINIU storage is not supported.");
+      } else {
+        const form = new FormData();
+        form.append(
+          "file",
+          new Blob([new Uint8Array(data)], { type: contentType }),
+          name
+        );
+        res = await fetch(uploadUrl, { method: "PUT", body: form });
+      }
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        throw new ApiError(res.status, "upload_url", body);
+      }
+      await res.body?.cancel();
+    } catch (e) {
+      // 上傳紀錄會留在「我的資源」，失敗時盡量刪掉
+      await this.deleteUpload(upload.id).catch(() => {});
+      throw e;
+    }
+    return upload;
+  }
+
+  /** 刪除上傳的檔案（例如存草稿前上傳失敗或不再需要的檔案） */
+  public async deleteUpload(uploadId: number): Promise<void> {
+    const endpoint = `/api/uploads/${uploadId}`;
+    const res = await this.call(endpoint, { method: "DELETE" });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new ApiError(res.status, endpoint, body);
+    }
+    await res.body?.cancel();
+  }
+
+  /**
+   * 存草稿或正式繳交作業。已有草稿時傳入 submissionId 以覆蓋該草稿；
+   * isDraft 為 false 即正式繳交（之後只能透過 retractSubmission 撤回）。
+   */
+  public saveSubmission(
+    activityId: number,
+    options: {
+      uploadIds: number[];
+      comment?: string;
+      isDraft: boolean;
+      submissionId?: number;
+      /** activity.data.mode，預設 normal */
+      mode?: string;
+      /** mode 為 multiple 時必填：選擇的題目（activity.data.multiple_choice[].title） */
+      multipleChoiceTitle?: string;
+    }
+  ): Promise<SubmissionResult> {
+    const {
+      uploadIds,
+      comment = "",
+      isDraft,
+      submissionId,
+      mode = "normal",
+      multipleChoiceTitle,
+    } = options;
+    return this.sendJson(
+      submissionId ? "PUT" : "POST",
+      `/api/course/activities/${activityId}/submissions`,
+      {
+        comment,
+        uploads: uploadIds,
+        slides: [],
+        is_draft: isDraft,
+        mode,
+        other_resources: [],
+        uploads_in_rich_text: [],
+        ...(submissionId && { submission_id: submissionId }),
+        ...(mode === "multiple" && {
+          multiple_choice_title: multipleChoiceTitle,
+        }),
+      }
+    );
+  }
+
+  /** 撤回已繳交的作業（作業需允許撤回），撤回後會變回草稿 */
+  public async retractSubmission(submissionId: number): Promise<void> {
+    const endpoint = `/api/submissions/${submissionId}/retract`;
+    const res = await this.call(endpoint, { method: "PUT" });
+    const body = await res.text().catch(() => "");
+    // 失敗時可能是 HTTP 200 但內容為 {code: 40001}
+    let code: unknown;
+    try {
+      code = JSON.parse(body)?.code;
+    } catch {}
+    if (!res.ok || (typeof code === "number" && code >= 40000)) {
+      throw new ApiError(res.status, endpoint, body);
+    }
+  }
+
+  // ---- 考試與成績（唯讀） ----
+
+  public getExamList(courseId: number): Promise<Exam[]> {
+    return this.getAllPages(`/api/courses/${courseId}/exam-list`, "exams");
+  }
+
+  public async getExamScores(courseId: number): Promise<ExamScore[]> {
+    const res = await this.requestJson(`/api/courses/${courseId}/exam-scores`);
+    return res.exam_scores;
+  }
+
+  // ---- 討論區 ----
+
+  /** 討論區分類；討論區活動的 topic_category_id 對應這裡的 id */
+  public async getTopicCategories(courseId: number): Promise<TopicCategory[]> {
+    const res = await this.requestJson(
+      `/api/courses/${courseId}/topic-categories`
+    );
+    return res.topic_categories;
+  }
+
+  public async getForumTopics(
+    categoryId: number,
+    page = 1,
+    pageSize = 50
+  ): Promise<Topic[]> {
+    const res = await this.requestJson(
+      `/api/forum/categories/${categoryId}` +
+        query({ page, page_size: pageSize })
+    );
+    return res.result?.topics ?? [];
+  }
+
+  /** 單一主題與回覆 */
+  public getTopic(topicId: number): Promise<Topic> {
+    return this.requestJson(`/api/topics/${topicId}`);
+  }
+}
+
+/** API 回應不是 2xx，或預期 JSON 卻拿到別的內容 */
+export class ApiError extends Error {
+  status: number;
+  endpoint: string;
+  body: string;
+  constructor(status: number, endpoint: string, body: string) {
+    super(`API ${endpoint} failed: ${status} ${body.slice(0, 200)}`);
+    this.name = "ApiError";
+    this.status = status;
+    this.endpoint = endpoint;
+    this.body = body;
+    Object.setPrototypeOf(this, ApiError.prototype);
+  }
+}
+
+// 分頁的上限，避免回應的 pages 不正確時無限翻頁
+const MAX_PAGES = 50;
+
+type QueryParams = Record<
+  string,
+  string | number | boolean | object | null | undefined
+>;
+
+// 組 query string；物件（例如 conditions）以 JSON 編碼，null / undefined 略過
+function query(params: QueryParams): string {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value == null) continue;
+    search.set(
+      key,
+      typeof value === "object" ? JSON.stringify(value) : String(value)
+    );
+  }
+  const s = search.toString();
+  return s ? `?${s}` : "";
+}
+
+function bulletinConditions(options: BulletinQuery) {
+  return {
+    start_date: options.startDate ?? "",
+    end_date: options.endDate ?? "",
+    keyword: options.keyword ?? "",
+    ...(options.courseIds && { course_ids: options.courseIds }),
+  };
 }
 
 // 取出 Content-Disposition 的檔名：優先用 RFC 5987 的 filename*，否則用 filename。

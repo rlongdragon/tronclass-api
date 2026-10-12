@@ -1,12 +1,40 @@
-// 回應欄位整理自其他學校的開源 TronClass client，尚未在海大逐一驗證，
-// 因此只列出已知欄位並保留 index signature。
+// 回應欄位整理自海大實測與其他學校的開源 TronClass client。
+// 標註「海大實測」的型別欄位已在 tronclass.ntou.edu.tw 確認，其餘只列出已知欄位並保留 index signature。
 
 export interface loginResponse {
   success: boolean;
   message: string;
+  /** 失敗原因：驗證碼錯誤或帳密錯誤（CAS 的 #msg） */
+  reason?: "captcha" | "credentials";
 }
 
-/** GET /api/todos 的 todo_list 項目（id 為 activity id） */
+/** GET /api/profile（海大實測） */
+export interface Profile {
+  id: number;
+  name: string;
+  user_no?: string;
+  email?: string;
+  department?: { id?: number; name?: string; [key: string]: unknown };
+  [key: string]: unknown;
+}
+
+export interface Semester {
+  id: number;
+  name: string;
+  real_name?: string;
+  academic_year_id?: number;
+  is_active?: boolean;
+  [key: string]: unknown;
+}
+
+export interface AcademicYear {
+  id: number;
+  name: string;
+  is_active?: boolean;
+  [key: string]: unknown;
+}
+
+/** GET /api/todos 的 todo_list 項目（id 為 activity id；海大實測） */
 export interface TodoList {
   id: number;
   title: string;
@@ -14,25 +42,46 @@ export interface TodoList {
   course_id?: number;
   course_name?: string;
   course_code?: string;
+  course_type?: number | string;
   start_time?: string | null;
   end_time?: string | null;
   is_locked?: boolean;
+  is_student?: boolean;
+  prerequisites?: unknown[];
   [key: string]: unknown;
 }
 
-/** GET /api/my-courses 的 courses 項目 */
+/** GET /api/my-courses 的 courses 項目（海大實測） */
 export interface Course {
   id: number;
   name: string;
   course_code?: string;
-  display_name?: string;
-  academic_year_id?: number;
-  semester_id?: number;
+  course_type?: number | string;
+  credit?: string | number | null;
+  compulsory?: boolean;
   start_date?: string | null;
   end_date?: string | null;
-  is_closed?: boolean;
-  credit?: string | number | null;
+  academic_year?: { id: number; name: string; [key: string]: unknown } | null;
+  semester?: { id: number; name: string; [key: string]: unknown } | null;
+  department?: { id: number; name: string; [key: string]: unknown } | null;
   instructors?: { id: number; name: string; [key: string]: unknown }[];
+  /** @deprecated 海大不回傳，改用 academic_year / semester 物件 */
+  academic_year_id?: number;
+  /** @deprecated 海大不回傳，改用 academic_year / semester 物件 */
+  semester_id?: number;
+  /** @deprecated 海大的 my-courses 不回傳（getCourse 才有） */
+  display_name?: string;
+  /** @deprecated 海大不回傳 */
+  is_closed?: boolean;
+  [key: string]: unknown;
+}
+
+/** GET /api/courses/{id}/modules 的 modules 項目（海大實測） */
+export interface CourseModule {
+  id: number;
+  name: string;
+  sort?: number;
+  is_hidden?: boolean;
   [key: string]: unknown;
 }
 
@@ -45,11 +94,11 @@ export interface HomeworkActivity {
   score?: number | string | null;
   score_published?: boolean;
   submitted?: boolean;
-  uploads?: unknown[];
+  uploads?: Upload[];
   [key: string]: unknown;
 }
 
-/** activity.uploads[] 的附件 */
+/** activity.uploads[] 的附件（海大實測） */
 export interface Upload {
   id: number;
   name: string;
@@ -62,7 +111,20 @@ export interface Upload {
   [key: string]: unknown;
 }
 
-/** GET /api/courses/{id}/activities 的 activities 項目 */
+/** uploadFile 的回傳：剛建立的上傳紀錄，id 用於 saveSubmission 的 uploadIds */
+export interface CreatedUpload {
+  id: number;
+  name: string;
+  size?: number;
+  status?: string;
+  /** 檔案本體要送往的網址與儲存方式 */
+  upload_url?: string;
+  storage_type?: string;
+  transcoder?: string;
+  [key: string]: unknown;
+}
+
+/** GET /api/courses/{id}/activities 的 activities 項目（海大實測） */
 export interface Activity {
   id: number;
   title: string;
@@ -72,7 +134,15 @@ export interface Activity {
   start_time?: string | null;
   end_time?: string | null;
   is_closed?: boolean;
-  data?: { description?: string; [key: string]: unknown };
+  is_in_progress?: boolean;
+  submit_by_group?: boolean;
+  data?: {
+    description?: string;
+    mode?: string;
+    submit_times?: number;
+    allow_retract?: boolean;
+    [key: string]: unknown;
+  };
   uploads?: Upload[];
   [key: string]: unknown;
 }
@@ -82,4 +152,95 @@ export interface DownloadedFile {
   filename?: string;
   contentType: string;
   data: Buffer;
+}
+
+/** submission_list 的項目：一次繳交或草稿 */
+export interface Submission {
+  id: number;
+  comment?: string;
+  uploads?: Upload[];
+  created_at?: string | null;
+  submitted_at?: string | null;
+  is_draft?: boolean;
+  is_latest_version?: boolean;
+  can_retract?: boolean;
+  score?: number | string | null;
+  final_score?: number | string | null;
+  instructor_comment?: string | null;
+  [key: string]: unknown;
+}
+
+/** saveSubmission 的回應 */
+export interface SubmissionResult {
+  submission?: Submission;
+  message?: string;
+  [key: string]: unknown;
+}
+
+export interface BulletinQuery {
+  courseIds?: number[];
+  keyword?: string;
+  /** YYYY-MM-DD */
+  startDate?: string;
+  /** YYYY-MM-DD */
+  endDate?: string;
+}
+
+/** 課程公告與全校公告；content 為 HTML（海大實測） */
+export interface Bulletin {
+  id: number;
+  title: string;
+  content?: string;
+  course_id?: number;
+  created_at?: string;
+  created_by?: { id?: number; name?: string; [key: string]: unknown };
+  uploads?: Upload[];
+  [key: string]: unknown;
+}
+
+export interface NotificationItem {
+  id: string | number;
+  type: string;
+  unread?: boolean;
+  timestamp?: number | string;
+  payload?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+/** GET /ntf/users/{id}/notifications（海大實測，沒有 total_count） */
+export interface NotificationList {
+  notifications: NotificationItem[];
+  unread_count?: number;
+  total_count?: number;
+  [key: string]: unknown;
+}
+
+export interface Exam {
+  id: number;
+  title: string;
+  start_time?: string | null;
+  end_time?: string | null;
+  [key: string]: unknown;
+}
+
+export interface ExamScore {
+  activity_id: number;
+  score?: number | string | null;
+  [key: string]: unknown;
+}
+
+export interface TopicCategory {
+  id: number;
+  title?: string;
+  activity_id?: number;
+  [key: string]: unknown;
+}
+
+export interface Topic {
+  id: number;
+  title: string;
+  content?: string;
+  created_at?: string;
+  created_by?: { id?: number; name?: string; [key: string]: unknown };
+  [key: string]: unknown;
 }
