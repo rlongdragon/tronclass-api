@@ -106,6 +106,20 @@ TypeScript projects can import the types directly:
 import Tronclass, { type Course, type TodoList } from "tronclass-api";
 ```
 
+## Saving the session
+
+After logging in you can export the session and restore it next time instead of logging in again:
+
+```javascript
+const saved = await tron.exportSession(); // a string equivalent to login credentials; store it where only you can read it
+
+// next start
+const tron = new Tronclass();
+tron.setBaseUrl("https://tronclass.ntou.edu.tw");
+await tron.importSession(saved);
+tron.setCredentials("your_username", "your_password"); // used to log in again if the session has expired
+```
+
 ## Rate limiting
 
 To avoid being blocked by the server due to overly frequent requests, the Tronclass class includes a simple rate-limiting mechanism. When requests are too frequent, a `RateLimitError` is thrown and includes a `waitTime` property indicating the suggested wait time (milliseconds). Callers can use this information to decide when to retry.

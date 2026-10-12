@@ -89,6 +89,37 @@ class TronClass {
   }
 
   /**
+   * 設定 session 失效時自動重新登入用的帳密（與 OCR 函數），不會立即登入。
+   * 搭配 importSession 使用：沿用舊的 session，失效時才登入。
+   */
+  public setCredentials(
+    username: string,
+    password: string,
+    ocr?: (dataUrl: string) => Promise<string>
+  ): void {
+    this.username = username;
+    this.password = password;
+    this.ocr = ocr;
+  }
+
+  /**
+   * 匯出目前的 cookie（含 TronClass 的 session），可存起來下次用 importSession 還原。
+   * 內容等同登入憑證，請存放在只有自己能讀取的位置。
+   */
+  public async exportSession(): Promise<string> {
+    return JSON.stringify(await this.jar.serialize());
+  }
+
+  /**
+   * 還原 exportSession 匯出的 cookie，之後的 API 呼叫直接沿用該 session。
+   * session 若已失效，call() 會用 setCredentials / login 設定的帳密自動重新登入。
+   */
+  public async importSession(serialized: string): Promise<void> {
+    this.jar = await CookieJar.deserialize(serialized);
+    this.loggedIn = true;
+  }
+
+  /**
    * 登入。先走 CAS REST（不需要驗證碼）；REST 無法使用時才改走登入表單，
    * 這時需要 ocr 辨識驗證碼。
    */

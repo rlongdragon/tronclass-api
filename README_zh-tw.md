@@ -106,6 +106,20 @@ TypeScript 專案可以直接引入型別：
 import Tronclass, { type Course, type TodoList } from "tronclass-api";
 ```
 
+## 保存 session
+
+登入後可以把 session 匯出存起來，下次直接還原，不必重新登入：
+
+```javascript
+const saved = await tron.exportSession(); // 字串，內容等同登入憑證，請存放在只有自己能讀取的位置
+
+// 下次啟動
+const tron = new Tronclass();
+tron.setBaseUrl("https://tronclass.ntou.edu.tw");
+await tron.importSession(saved);
+tron.setCredentials("your_username", "your_password"); // session 失效時用來自動重新登入
+```
+
 ## rate limiting
 為了避免過於頻繁的請求導致被伺服器封鎖，`Tronclass` 類別內建了一個簡單的 rate limiting 機制。 當請求過於頻繁時，會拋出一個 `RateLimitError`，並且包含一個 `waitTime` 屬性，表示建議等待的時間（毫秒）。 呼叫端可以根據這個資訊來決定何時重新發請求。
 
